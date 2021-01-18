@@ -1,0 +1,771 @@
+---
+title: "Korean dyads - analysis of lexical data"
+author: "Bodo"
+date: "29/10/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Prelims
+
+Load packages:
+
+```{r, warning = FALSE, message = FALSE}
+library(tidyverse)
+library(brms)
+library(chron)
+library(patchwork)
+library(effsize)
+```
+
+R and package versions for reporting and reproducibility:
+
+```{r}
+R.Version()
+packageVersion('tidyverse')
+packageVersion('brms')
+packageVersion('chron')
+packageVersion('patchwork')
+packageVersion('effsize')
+```
+
+For data loading, first, get the right working directory:
+
+```{r}
+# Save current directory:
+
+current_dir <- getwd()
+
+# Get all file names:
+
+all_files <- list.files('../data/')
+
+# Create variable names from file names:
+
+var_names <- str_replace(all_files, '\\.csv', '')
+```
+
+Loop through all the files and load them in:
+
+```{r, message = FALSE, warning = FALSE}
+for (i in seq_along(all_files)) {
+  assign(var_names[i], read_csv(str_c('../data/', all_files[i])))
+}
+```
+
+Make them all into long format:
+
+```{r}
+for (i in seq_along(var_names)) {
+  x <- get(var_names[i])
+  x <- pivot_longer(x,
+                    cols = Movie:Map2,
+                    names_to = 'Task',
+                    values_to = 'Count')
+  assign(var_names[i], x)
+}
+```
+
+Put them all into one big data file, making the duration one the basis. Let's process the durations first:
+
+```{r}
+dur <- dur %>% rename(Dur = Count) %>% 
+  mutate(Seconds = times(Dur) * 60 * 24,
+         Seconds = as.vector(Seconds),
+         LogDur = log10(Seconds))
+```
+
+Append all to this durations tibble:
+
+```{r}
+# vector of var_names without duration:
+
+var_nodur <- var_names[var_names != 'dur']
+
+# loop through that and append to the dur frame:
+
+for (i in seq_along(var_nodur)) {
+  x <- get(var_nodur[i])
+  x <- select(x, Count) # select 'Count' column
+  colnames(x) <- var_nodur[i]
+  dur <- bind_cols(dur, x)
+}
+```
+
+Rename the main tibble:
+
+```{r}
+lex <- dur
+```
+
+Now that it's all together, let's get rid of all other data frames:
+
+```{r}
+rm(list = ls()[!ls() %in% c('lex', 'var_nodur', 'current_dir')])
+```
+
+## Descriptive statistics
+
+Compute the overall counts for each of these variables:
+
+```{r}
+lex_tab <- lex %>% group_by(Condition) %>% 
+  summarize_at(.vars = var_nodur, .funs = sum) %>% 
+  pivot_longer(cols = backchannels:total_utterances) %>% 
+  pivot_wider(names_from = Condition)
+```
+
+Append durations:
+
+```{r}
+durs <- lex %>% group_by(Condition) %>% 
+  summarize(TotalSeconds = sum(Seconds)) %>%
+  pull(TotalSeconds)
+```
+
+First is friend, second is professor. Use this to calculate percentages and rates:
+
+```{r}
+lex_tab <- lex_tab %>%
+  mutate(prof_per = professor / (professor + friend),
+         prof_per = round(prof_per, 2),
+         prof_per = str_c(prof_per * 100, '%')) %>% 
+  mutate(friend_rate = friend / durs[1],
+         professor_rate = professor / durs[2],
+         ProfFriendRateRatio = professor_rate / friend_rate,
+         FriendProfRateRatio = friend_rate / professor_rate) %>% 
+  mutate(ProfFriendRateRatio = round(ProfFriendRateRatio, 2),
+         FriendProfRateRatio = round(FriendProfRateRatio, 2))
+
+# Check:
+
+lex_tab
+```
+
+Write this to table:
+
+```{r}
+write_csv(lex_tab, '../summary_tables/count_rate_summary.csv')
+```
+
+Look at how many participants had more/less/same. First, we create a rate data frame with the rates:
+
+```{r}
+rates <- lex
+
+for (i in seq_along(var_nodur)) {
+  this_var <- var_nodur[i]
+  rates[, this_var] <- rates[, this_var] / rates$Seconds
+}
+```
+
+Get the averages per subject for each condition:
+
+```{r}
+rates_ppt <- rates %>%
+  group_by(ID, Sex, Condition) %>% 
+  summarize_at(.vars = var_nodur,
+               .funs = mean)
+```
+
+Check for how many they are same/smaller/larger:
+
+```{r}
+# Initialize empty object:
+
+indiv_diff <- c()
+
+# Loop through variables and append that info to the data frame:
+
+for (i in seq_along(var_nodur)) {
+  friend <- unlist(rates_ppt[rep(c(TRUE, FALSE), 14), var_nodur[i]])
+  prof <- unlist(rates_ppt[rep(c(FALSE, TRUE), 14), var_nodur[i]])
+  
+  friend_more <- as.vector(friend > prof)
+  prof_more <- as.vector(prof > friend)
+  same <- as.vector(prof == friend)
+  
+  df <- data.frame(variable = var_nodur[i],
+                   friend_more = sum(friend_more),
+                   prof_more = sum(prof_more),
+                   same = sum(same)) # unlikely to happen, but just in case
+  
+  indiv_diff <- rbind(indiv_diff, df)
+}
+```
+
+Write this to table:
+
+```{r}
+write_csv(indiv_diff, '../summary_tables/rate_comparison.csv')
+```
+
+## Data visualization
+
+We want to plot the rates on the y-axis, separately for friend and professor (x-axis categories). Each data point will be one subject:
+
+```{r}
+lex_avg <- lex %>% 
+  mutate(backchannels = backchannels / Seconds,
+            case_ellipsis = case_ellipsis / Seconds,
+            dative_eykey = dative_eykey / Seconds,
+            dative_hanthey = dative_hanthey / Seconds,
+            fillers = fillers / Seconds,
+            hago_lang = hago_lang / Seconds,
+            hisses = hisses / Seconds,
+            honorific_lexemes = honorific_lexemes / Seconds,
+            honorific_suffixes = honorific_suffixes / Seconds,
+            ideophones = ideophones / Seconds,
+            kwa = kwa / Seconds,
+            pronouns = pronouns / Seconds,
+            sinokorean = sinokorean / Seconds) %>% 
+  group_by(ID, Sex,Condition) %>% 
+  summarize(backchannels = mean(backchannels),
+            case_ellipsis = mean(case_ellipsis),
+            dative_eykey = mean(dative_eykey),
+            dative_hanthey = mean(dative_hanthey),
+            fillers = mean(fillers),
+            hago_lang = mean(hago_lang),
+            hisses = mean(hisses),
+            honorific_lexemes = mean(honorific_lexemes),
+            honorific_suffixes = mean(honorific_suffixes),
+            ideophones = mean(ideophones),
+            kwa = mean(kwa),
+            pronouns = mean(pronouns),
+            sinokorean = mean(sinokorean))
+```
+
+Actually, with this data it makes sense to calculate effect size. For this, get the relevant variables names:
+
+```{r}
+var_names <- lex_avg %>% ungroup() %>% 
+  select(backchannels:sinokorean) %>% colnames()
+```
+
+Loop through these variables, compute paired Cohen's d (ignoring the error message since order of ID variables is appropriately paired), and save this as a separate file:
+
+```{r, warning = FALSE}
+d_tab <- c()
+for (i in seq_along(var_names)) {
+  this_f <- as.formula(str_c(var_names[i], '~ Condition | Subject(ID)'))
+  this_d <- cohen.d(this_f, paired = TRUE, data = lex_avg)
+  this_d <- this_d$estimate
+  d_tab <- rbind(d_tab,
+                 data.frame(var = var_names[i], d = this_d))
+}
+```
+
+Round this, sort it, and save it:
+
+```{r}
+d_tab <- mutate(d_tab,
+                d = round(d, 2))
+
+# Save:
+
+write_csv(d_tab, '../summary_tables/cohen_d.csv')
+```
+
+Re-label the condition variable for more transparency:
+
+```{r}
+lex_avg <- lex_avg %>%
+  mutate(Condition = ifelse(Condition == 'friend',
+                            'with\nfriend',
+                            'with\nprofessor'))
+```
+
+Create a plot for ideophones:
+
+```{r, fig.width = 4, fig.height = 6}
+ideo_p <- lex_avg %>% ggplot(aes(x = Condition, y = ideophones,
+                       group = ID,
+                       fill = Condition)) +
+  geom_line(col = 'grey') +
+  geom_point(size = 3, shape = 21,
+             alpha = 0.85) +
+  scale_fill_manual(values = c("#E69F00", "#0072B2")) +
+  xlab('') +
+  ylab('Rate of ideophones') +
+  theme_minimal() +
+  theme(legend.position = 'none') +
+  theme(axis.title.y = element_text(margin = margin(t = 0, r = 16,
+                                                    b = 0, l = 0),
+                                    size = 16, face = 'bold'),
+        axis.text.x = element_text(face = 'bold', size = 12))
+
+# Save:
+
+ggsave(plot = ideo_p, filename = '../figures/ideophones.pdf',
+       width = 3, height = 4)
+```
+
+Create a plot for case ellipsis:
+
+```{r, fig.width = 4, fig.height = 6}
+case_p <- lex_avg %>% ggplot(aes(x = Condition, y = case_ellipsis,
+                       group = ID,
+                       fill = Condition)) +
+  geom_line(col = 'grey') +
+  geom_point(size = 3, shape = 21,
+             alpha = 0.85) +
+  scale_fill_manual(values = c("#E69F00", "#0072B2")) +
+  xlab('') +
+  ylab('Rate of case ellipsis') +
+  theme_minimal() +
+  theme(legend.position = 'none') +
+  theme(axis.title.y = element_text(margin = margin(t = 0, r = 16,
+                                                    b = 0, l = 0),
+                                    size = 16, face = 'bold'),
+        axis.text.x = element_text(face = 'bold', size = 12))
+
+# Save:
+
+ggsave(plot = case_p, filename = '../figures/case_ellipsis.pdf',
+       width = 3, height = 4)
+```
+
+Create a plot for pronouns:
+
+```{r, fig.width = 4, fig.height = 6}
+pronouns_p <- lex_avg %>% ggplot(aes(x = Condition, y = pronouns,
+                       group = ID,
+                       fill = Condition)) +
+  geom_line(col = 'grey') +
+  geom_point(size = 3, shape = 21,
+             alpha = 0.85) +
+  scale_fill_manual(values = c("#E69F00", "#0072B2")) +
+  xlab('') +
+  ylab('Rate of pronouns') +
+  theme_minimal() +
+  theme(legend.position = 'none') +
+  theme(axis.title.y = element_text(margin = margin(t = 0, r = 16,
+                                                    b = 0, l = 0),
+                                    size = 16, face = 'bold'),
+        axis.text.x = element_text(face = 'bold', size = 12))
+
+# Save:
+
+ggsave(plot = pronouns_p, filename = '../figures/pronouns.pdf',
+       width = 3, height = 4)
+```
+
+Create a plot for rate of back channels, and next to it one with fillers:
+
+```{r}
+backchannel_p <- lex_avg %>% ggplot(aes(x = Condition, y = backchannels,
+                       group = ID,
+                       fill = Condition)) +
+  geom_line(col = 'grey') +
+  geom_point(size = 3, shape = 21,
+             alpha = 0.85) +
+  scale_fill_manual(values = c("#E69F00", "#0072B2")) +
+  xlab('') +
+  scale_y_continuous(breaks = seq(0.02, 0.12, 0.02),
+                     limits = c(0.01, 0.13)) +
+  ylab('Rate') +
+  ggtitle('(a) Backchannels') +
+  theme_minimal() +
+  theme(legend.position = 'none') +
+  theme(axis.title.y = element_text(margin = margin(t = 0, r = 16,
+                                                    b = 0, l = 0),
+                                    size = 16, face = 'bold'),
+        axis.text.x = element_text(face = 'bold', size = 12),
+        plot.title = element_text(face = 'bold'))
+
+fillers_p <- lex_avg %>% ggplot(aes(x = Condition, y = fillers,
+                       group = ID,
+                       fill = Condition)) +
+  geom_line(col = 'grey') +
+  geom_point(size = 3, shape = 21,
+             alpha = 0.85) +
+  scale_fill_manual(values = c("#E69F00", "#0072B2")) +
+  xlab('') +
+  ylab('') +
+  scale_y_continuous(breaks = seq(0.02, 0.12, 0.02),
+                     limits = c(0.01, 0.13)) +
+  theme_minimal() +
+  theme(legend.position = 'none') +
+  ggtitle('(b) Fillers') +
+  theme(axis.title.y = element_text(margin = margin(t = 0, r = 16,
+                                                    b = 0, l = 0),
+                                    size = 16, face = 'bold'),
+        axis.text.x = element_text(face = 'bold', size = 12),
+        plot.title = element_text(face = 'bold'))
+both_p <- backchannel_p + fillers_p
+
+ggsave(plot = both_p, filename = '../figures/backchannels_fillers.pdf',
+       width = 6, height = 4)
+```
+
+Create a plot for honorifics:
+
+```{r}
+hon_suffix_p <- lex_avg %>% ggplot(aes(x = Condition,
+                                       y = honorific_suffixes,
+                                       group = ID,
+                                       fill = Condition)) +
+  geom_line(col = 'grey') +
+  geom_point(size = 3, shape = 21,
+             alpha = 0.85) +
+  scale_fill_manual(values = c("#E69F00", "#0072B2")) +
+  xlab('') +
+  scale_y_continuous(breaks = seq(0, 0.25, 0.05),
+                     limits = c(0, 0.25)) +
+  ylab('Rate') +
+  ggtitle('(a) Honorific suffixes') +
+  theme_minimal() +
+  theme(legend.position = 'none') +
+  theme(axis.title.y = element_text(margin = margin(t = 0, r = 16,
+                                                    b = 0, l = 0),
+                                    size = 16, face = 'bold'),
+        axis.text.x = element_text(face = 'bold', size = 12),
+        plot.title = element_text(face = 'bold'))
+
+hon_lex_p <- lex_avg %>% ggplot(aes(x = Condition,
+                                    y = honorific_lexemes,
+                                    group = ID,
+                                    fill = Condition)) +
+  geom_line(col = 'grey') +
+  geom_point(size = 3, shape = 21,
+             alpha = 0.85) +
+  scale_fill_manual(values = c("#E69F00", "#0072B2")) +
+  xlab('') +
+  ylab('') +
+  scale_y_continuous(breaks = seq(0, 0.25, 0.05),
+                     limits = c(0, 0.25)) +
+  theme_minimal() +
+  theme(legend.position = 'none') +
+  ggtitle('(b) Honorific lexemes') +
+  theme(axis.title.y = element_text(margin = margin(t = 0, r = 16,
+                                                    b = 0, l = 0),
+                                    size = 16, face = 'bold'),
+        axis.text.x = element_text(face = 'bold', size = 12),
+        plot.title = element_text(face = 'bold'))
+both_p <- hon_suffix_p + hon_lex_p
+
+ggsave(plot = both_p, filename = '../figures/honorifics.pdf',
+       width = 6, height = 4)
+```
+
+## Check gender
+
+It is possible that there are gender differences, particularly for some of the variables that show mixed results. Here, it would be useful to look at individual differences with respect to male/female, at least exploratively since we don't have clear predictions for gender for most of these variables.
+
+```{r}
+hon_suffix_p + facet_wrap(~Sex)
+hon_lex_p + facet_wrap(~Sex)
+ideo_p + facet_wrap(~Sex)
+pronouns_p + facet_wrap(~Sex)
+backchannel_p + facet_wrap(~Sex)
+fillers_p + facet_wrap(~Sex)
+```
+
+Picture looks not markedly difference for the two genders.
+
+## Settings for Bayesian analysis (same across all)
+
+Settings for parallel processing:
+
+```{r}
+options(mc.cores=parallel::detectCores())
+```
+
+Weakly informative priors:
+
+```{r}
+my_priors <- c(prior('normal(0, 2)', class = 'b'))
+```
+
+Control parameters for MCMC sampling:
+
+```{r}
+my_controls <- list(adapt_delta = 0.999,
+                    max_treedepth = 13)
+```
+
+Iterations for all chains:
+
+```{r}
+my_iter <- 6000
+my_warmup <- 4000
+```
+
+## Loop through all run Bayesian models
+
+Create an empty data frame with the relevant stats:
+
+```{r}
+bayes_res <- data.frame(var = var_nodur)
+bayes_res$Estimate <- NA
+bayes_res$SE <- NA
+bayes_res$Lower <- NA
+bayes_res$Upper <- NA
+bayes_res$PostAboveZero <- NA
+bayes_res$PostBelowZero <- NA
+bayes_res$p_AboveZero <- NA
+bayes_res$p_BelowZero <- NA
+```
+
+Create the bit of the model formula that doesn't change:
+
+```{r}
+formula_constant <- ' ~ Condition + offset(LogDur) + (1 + Condition|ID) + (1 + Condition|Task)'
+```
+
+The loop:
+
+```{r, message = FALSE, warning = FALSE}
+for (i in seq_along(var_nodur)) {
+  var <- var_nodur[i]
+  this_formula <- as.formula(str_c(var, formula_constant))
+  
+  # Run the model:
+  
+  this_mdl <- brm(formula = this_formula,
+                  family = 'negbinomial',
+                  data = lex,
+                  prior = my_priors,
+                  control = my_controls,
+                  seed = 42,
+                  init = 0, chains = 4,
+                  iter = my_iter, warmup = my_warmup)
+  
+  # Save the model:
+  
+  save(this_mdl, file = str_c('../models/', var_nodur[i], '.mdl'),
+       compress = 'xz', compression_level = 9)
+  
+  # Save the estimates and upper and lower bound:
+  
+  x <- fixef(this_mdl)[2, ]
+  
+  # Extract fixed effects coefficients:
+  
+  bayes_res[i, ]$Estimate <- x['Estimate']
+  bayes_res[i, ]$SE <- x['Est.Error']
+  bayes_res[i, ]$Lower <- x['Q2.5']
+  bayes_res[i, ]$Upper <- x['Q97.5']
+  
+  # Extract posteriors:
+  
+  posts <- posterior_samples(this_mdl)
+  bayes_res[i, ]$PostAboveZero <- sum(posts$b_Condition > 0)
+  bayes_res[i, ]$PostBelowZero <- sum(posts$b_Condition < 0)
+  bayes_res[i, ]$p_AboveZero <- sum(posts$b_Condition > 0) / nrow(posts)
+  bayes_res[i, ]$p_BelowZero <- sum(posts$b_Condition < 0) / nrow(posts)
+}
+```
+
+Write Bayes summary table to file:
+
+```{r}
+write_csv(bayes_res, '../summary_tables/bayes_results.csv')
+```
+
+## Different analysis approach for datives and comitatives
+
+The above analysis includes datives and comitatives for comparison's sake (treating them like any other count variable). However, the analysis that will ultimately be of a different nature since the eykey/hanthey are mutually exclusive, and we want to model the relative choice of the two. The same goes for kwa vs. hago/rang.
+
+```{r}
+# Get relevant variables:
+
+lex_dative <- select(lex,
+                     ID, Condition, Task, LogDur,
+                     dative_eykey, dative_hanthey)
+
+# Make into long format with the datives:
+
+lex_dative <- pivot_longer(lex_dative,
+                           cols = dative_eykey:dative_hanthey,
+                           values_to = 'n',
+                           names_to = 'DativeType') %>% 
+  mutate(DativeType = str_replace(DativeType, 'dative_', ''))
+
+# Check:
+
+lex_dative
+```
+
+The numbers are very low anyway:
+
+```{r}
+lex_dative$n
+```
+
+We will model the interaction between condition and dativetype.
+
+Build Bayesian logistic regression models for this:
+
+```{r, message = FALSE, warning = FALSE}
+dative_mdl <- brm(n ~ Condition * DativeType +
+                    (1 + Condition * DativeType|ID) +
+                    (1 + Condition * DativeType|Task),
+                  family = 'negbinomial',
+                  data = lex_dative,
+                  prior = my_priors,
+                  control = my_controls,
+                  seed = 42,
+                  init = 0, chains = 4,
+                  iter = my_iter, warmup = my_warmup)
+
+# Save the model:
+
+save(dative_mdl, file = '../models/datives_mdl.RData',
+     compress = 'xz', compression_level = 9)
+```
+
+Summarize this model:
+
+```{r}
+summary(dative_mdl)
+```
+
+Do the same for comitatives:
+
+```{r}
+# Get relevant variables:
+
+lex_com <- select(lex,
+                  ID, Condition, Task, LogDur,
+                  kwa, hago_lang)
+
+# Make into long format with the datives:
+
+lex_com <- pivot_longer(lex_com,
+                        cols = kwa:hago_lang,
+                        values_to = 'n',
+                        names_to = 'ComitativeType')
+
+# Check:
+
+lex_com
+```
+
+The numbers are very low anyway:
+
+```{r}
+lex_com$n
+```
+
+Build the model:
+
+```{r, message = FALSE, warning = FALSE}
+com_mdl <- brm(n ~ Condition * ComitativeType +
+                    (1 + Condition * ComitativeType|ID) +
+                    (1 + Condition * ComitativeType|Task),
+                  family = 'negbinomial',
+                  data = lex_com,
+                  prior = my_priors,
+                  control = my_controls,
+                  seed = 42,
+                  init = 0, chains = 4,
+                  iter = my_iter, warmup = my_warmup)
+
+# Save the model:
+
+save(com_mdl, file = '../models/com_mdl.RData',
+     compress = 'xz', compression_level = 9)
+```
+
+Summarize the model:
+
+```{r}
+summary(com_mdl)
+```
+
+There's lots of zeros. What about a subset analysis with just those that have SOME dative or SOME comitative. Then we can use logistic regression.
+
+Get the total number of datives and the total number of comitatives:
+
+```{r}
+lex <- mutate(lex,
+              dative_n = dative_eykey + dative_hanthey,
+              com_n = hago_lang + kwa)
+```
+
+There's a number of 0's, which doesn't work for binomial models. So we'll do a subjects-only analysis in this case:
+
+```{r}
+lex_sub <- lex %>% group_by(ID, Condition, Task) %>% 
+  summarize(dative_n = sum(dative_n),
+            dative_eykey = sum(dative_eykey),
+            com_n = sum(com_n),
+            kwa = sum(kwa))
+
+lex_sub
+```
+
+Get the subsets (separately):
+
+```{r}
+dative_no_zero <- filter(lex_sub,
+                         dative_n > 0)
+com_no_zero <- filter(lex_sub,
+                      com_n > 0)
+
+# Check how many that is:
+
+nrow(dative_no_zero)
+nrow(com_no_zero)
+```
+
+What in terms of subjects?
+
+```{r}
+length(unique(dative_no_zero$ID))
+length(unique(com_no_zero$ID))
+```
+
+OK, so let's do it. First, the datives:
+
+```{r, message = FALSE, warning = FALSE}
+dative_binom_mdl <- brm(dative_eykey | trials(dative_n) ~ Condition +
+                          (1 + Condition|ID) +
+                          (1 + Condition|Task),
+                        family = 'binomial',
+                        data = dative_no_zero,
+                        prior = my_priors,
+                        control = my_controls,
+                        seed = 42,
+                        init = 0, chains = 4,
+                        iter = my_iter, warmup = my_warmup)
+
+# Save the model:
+
+save(dative_binom_mdl, file = '../models/dative_binom_mdl.RData',
+     compress = 'xz', compression_level = 9)
+```
+
+Then, the comitatives:
+
+```{r, message = FALSE, warning = FALSE}
+com_binom_mdl <- brm(kwa | trials(com_n) ~ Condition +
+                          (1 + Condition|ID) +
+                          (1 + Condition|Task),
+                        family = 'binomial',
+                        data = com_no_zero,
+                        prior = my_priors,
+                        control = my_controls,
+                        seed = 42,
+                        init = 0, chains = 4,
+                        iter = my_iter, warmup = my_warmup)
+
+# Save the model:
+
+save(com_binom_mdl, file = '../models/com_binom_mdl.RData',
+     compress = 'xz', compression_level = 9)
+```
+
+Summarize both models:
+
+```{r}
+summary(dative_binom_mdl)
+summary(com_binom_mdl)
+```
+
+This completes this analysis.
+

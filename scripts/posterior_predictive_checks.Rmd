@@ -1,0 +1,73 @@
+---
+title: "Korean dyads - analysis of lexical data; posterior predictive checks"
+author: "Bodo"
+date: "29/10/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+The main analysis is "analysis.Rmd". This script uses the resulting models and performs posterior predictive checks.
+
+## Prelims
+
+Load packages:
+
+```{r, warning = FALSE, message = FALSE}
+library(tidyverse)
+library(brms)
+```
+
+Get the model file names:
+
+```{r}
+files <- list.files('../models/')
+```
+
+Loop through this (they are all called "this_mdl"):
+
+```{r}
+for (i in seq_along(files)) {
+  load(str_c('../models/', files[i]))
+  assign(files[i], this_mdl)
+}
+```
+
+## Summarize all models separately
+
+Check the task random effects:
+
+```{r}
+coef(honorific_suffixes.mdl)$Task[,,2]
+coef(honorific_lexemes.mdl)$Task[,,2]
+coef(case_ellipsis.mdl)$Task[,,2]
+coef(pronouns.mdl)$Task[,,2]
+coef(ideophones.mdl)$Task[,,2]
+coef(backchannels.mdl)$Task[,,2]
+coef(fillers.mdl)$Task[,,2]
+coef(dative_eykey.mdl)$Task[,,2]
+coef(dative_hanthey.mdl)$Task[,,2]
+coef(kwa.mdl)$Task[,,2]
+coef(hago_lang.mdl)$Task[,,2]
+coef(sinokorean.mdl)$Task[,,2]
+coef(hisses.mdl)$Task[,,2]
+```
+
+## Posterior predictive checks
+
+Plot all of them and save the resulting image file:
+
+```{r, fig.width = 8, fig.height = 6}
+for (i in seq_along(files)) {
+  pp_check(get(files[i]), nsamples = 100)
+  ggsave(str_c('../pp_check/', files[i], '.png'),
+         width = 10, height = 6)
+}
+```
+
+This completes this script.
+
+
+
