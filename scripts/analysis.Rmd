@@ -75,7 +75,7 @@ Put them all into one big data file, making the duration one the basis. Let's pr
 dur <- dur %>% rename(Dur = Count) %>% 
   mutate(Seconds = times(Dur) * 60 * 24,
          Seconds = as.vector(Seconds),
-         LogDur = log10(Seconds))
+         LogDur = log(Seconds))
 ```
 
 Append all to this durations tibble:
@@ -389,7 +389,7 @@ fillers_p <- lex_avg %>% ggplot(aes(x = Condition, y = fillers,
                      limits = c(0.01, 0.13)) +
   theme_minimal() +
   theme(legend.position = 'none') +
-  ggtitle('(b) Fillers') +
+  ggtitle('(b) um/uh-type sounds') +
   theme(axis.title.y = element_text(margin = margin(t = 0, r = 16,
                                                     b = 0, l = 0),
                                     size = 16, face = 'bold'),
@@ -416,7 +416,7 @@ hon_suffix_p <- lex_avg %>% ggplot(aes(x = Condition,
   scale_y_continuous(breaks = seq(0, 0.25, 0.05),
                      limits = c(0, 0.25)) +
   ylab('Rate') +
-  ggtitle('(a) Honorific suffixes') +
+  ggtitle('(a) Addressee honorifics') +
   theme_minimal() +
   theme(legend.position = 'none') +
   theme(axis.title.y = element_text(margin = margin(t = 0, r = 16,
@@ -439,7 +439,7 @@ hon_lex_p <- lex_avg %>% ggplot(aes(x = Condition,
                      limits = c(0, 0.25)) +
   theme_minimal() +
   theme(legend.position = 'none') +
-  ggtitle('(b) Honorific lexemes') +
+  ggtitle('(b) Referent honorifics') +
   theme(axis.title.y = element_text(margin = margin(t = 0, r = 16,
                                                     b = 0, l = 0),
                                     size = 16, face = 'bold'),
@@ -449,6 +449,62 @@ both_p <- hon_suffix_p + hon_lex_p
 
 ggsave(plot = both_p, filename = '../figures/honorifics.pdf',
        width = 6, height = 4)
+```
+
+Create a plot for hisses:
+
+```{r}
+hiss_p <- lex_avg %>% ggplot(aes(x = Condition,
+                                 y = hisses,
+                                 group = ID,
+                                 fill = Condition)) +
+  geom_line(col = 'grey') +
+  geom_point(size = 3, shape = 21,
+             alpha = 0.85) +
+  scale_fill_manual(values = c("#E69F00", "#0072B2")) +
+  xlab('') +
+  scale_y_continuous(breaks = seq(0, 0.05, 0.01),
+                     limits = c(0, 0.045)) +
+  ylab('Rate') +
+  ggtitle('Hisses') +
+  theme_minimal() +
+  theme(legend.position = 'none') +
+  theme(axis.title.y = element_text(margin = margin(t = 0, r = 16,
+                                                    b = 0, l = 0),
+                                    size = 16, face = 'bold'),
+        axis.text.x = element_text(face = 'bold', size = 12),
+        plot.title = element_text(face = 'bold'))
+
+ggsave(plot = hiss_p, filename = '../figures/hisses.pdf',
+       width = 3, height = 4)
+```
+
+Create a plot for sinokorean words:
+
+```{r}
+sinokorean_p <- lex_avg %>% ggplot(aes(x = Condition,
+                                       y = sinokorean,
+                                       group = ID,
+                                       fill = Condition)) +
+  geom_line(col = 'grey') +
+  geom_point(size = 3, shape = 21,
+             alpha = 0.85) +
+  scale_fill_manual(values = c("#E69F00", "#0072B2")) +
+  xlab('') +
+  scale_y_continuous(breaks = seq(0, 0.25, 0.05),
+                     limits = c(0, 0.25)) +
+  ylab('Rate') +
+  ggtitle('Sino-Korean words') +
+  theme_minimal() +
+  theme(legend.position = 'none') +
+  theme(axis.title.y = element_text(margin = margin(t = 0, r = 16,
+                                                    b = 0, l = 0),
+                                    size = 16, face = 'bold'),
+        axis.text.x = element_text(face = 'bold', size = 12),
+        plot.title = element_text(face = 'bold'))
+
+ggsave(plot = sinokorean_p, filename = '../figures/sinokorean.pdf',
+       width = 3, height = 4)
 ```
 
 ## Check gender
